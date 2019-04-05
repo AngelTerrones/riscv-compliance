@@ -1,6 +1,6 @@
 = RISC-V Compliance Tests =
 RISC-V Foundation Compliance Task Group
-Issue 1.10 Draft
+Issue 1.11 Draft
 :toc:
 :icons: font
 :numbered:
@@ -115,12 +115,28 @@ Any custom words for spell checking should be added to link:./custom.wordlist[`c
 This document has been created by the following people (in alphabetical order of surname).
 
 [quote]
-Jeremy Bennett, Mary Bennett, Simon Davidmann, Radek Hajek, Lee Moore, Milan Nostersky, Marcela Zachariasova.
+Jeremy Bennett, Mary Bennett, Simon Davidmann, Neel Gala, Radek Hajek, Lee Moore, Milan Nostersky, Marcela Zachariasova.
 
 === Document history
 [cols="<1,<2,<3,<4",options="header,pagewidth",]
 |================================================================================
 | _Revision_ | _Date_            | _Author_ | _Modification_
+| 1.14 Draft  | 21 February 2019      |
+Deborah Soung |
+
+Documented how to use SiFive's RISC-V ISA Formal Specification model as a target.
+| 1.13 Draft  | 29 January 2019      |
+Deborah Soung |
+
+Added documentation on how to use Rocket Chip generated cores as targets.
+| 1.12 Draft  | 22 November 2018      |
+Simon Davidmann |
+
+Updated notes on Test Suites.
+| 1.11 Draft  | 21 November 2018      |
+Neel Gala |
+
+Added new signature format specs .
 | 1.10 Draft  | 20 June 2018      |
 
 Simon Davidmann, Lee Moore |
@@ -212,40 +228,18 @@ The RISC-V specification allows many optional instructions, registers, and other
 
 === The test signature
 
-The _test signature_ is defined as reference data written into memory during the execution of the test.  It should record values and results of the operation of the Test.
+The _test signature_ is defined as reference data written into memory during the execution of the test.  It should record values and results of the operation of the Test. It is expected that an implementation, at the end of a test, dumps the signature in to a file such that only 4-bytes are written per line, starting with the most-significant byte on the left.
 
 === The test reference signature
 
-The _test reference signature_ is the _test signature_ saved from an execution run of the RISC‑V _golden model_.  This is currently from a RISC-V ISS, but the intention is that the RISC-V Formal Model from the RISCV.org Formal Working Group will be used when it is complete, functional, and available.
+The _test reference signature_ is the _test signature_ saved from an execution run of the RISC‑V _golden model_.  This is currently from a RISC-V ISS, but the intention is that the RISC-V Formal Model from the RISCV.org Formal Working Group will be used when it is complete, functional, and available. 
 
 === The test suites
 
 Tests are grouped into different functional test suites targeting the different subsets of the full RISC-V specifications.  There will be ISA and privilege suites.
 
-Currently there is one test suite: the RV32I (developed by Codasip).
+For information on the status of the different test suites, look here: link:../riscv-test-suite/README.md[../riscv-test-suite/README.md]
 
-Test suites will be developed in this priority order:
-
-[options="compact"]
-* RV32I
-* RV64I
-* RV32IM
-* RV64IM
-* RV32IC
-* RV64IC
-* RV32IA
-* RV64IA
-* RV32IF
-* RV64IF
-* RV32ID
-* RV64ID
-* RV32E
-* RV32EC
-* RV32EA
-* RV32EF
-* RV32ED
-
-This order is subject to ratification by the Compliance Task Group
 
 === The test framework
 
@@ -327,8 +321,8 @@ For tracing the test the following  macros are defined in `riscv-target/riscvOVP
 [source,make]
 ----
 RVTEST_IO_INIT
-RVTEST_IO_WRITE_STR(_STR)
-RVTEST_IO_ASSERT_GPR_EQ(_R, _I)
+RVTEST_IO_WRITE_STR(_SP, _STR)
+RVTEST_IO_ASSERT_GPR_EQ(_SP, _R, _I)
 ----
 
 An example of a test that uses the tracing macros is `riscv-test-suite/rv32i/ISA/src/I-IO.S`.
@@ -362,6 +356,25 @@ tbd
 
 === Berkeley Spike ISA simulator
 For spike the file `riscv-target/spike/compliance_io.h` has the trace macros defined as empty.  The Makefile fragment in `riscv-target/spike/device/rv32i` has the spike run command for the RV32I device.
+
+=== Berkeley Rocket Chip emulators
+Additional environment variables:
+
+* `ROCKET_DIR`: Specifies link:https://github.com/freechipsproject/rocket-chip[Rocket Chip] directory. Required.
+* `ROCKET_CONFIG`: Specifies Rocket Chip link:https://github.com/freechipsproject/rocket-chip/blob/master/src/main/scala/system/Configs.scala[configuration]. **Usually** defaults to `DefaultConfig` or `DefaultRV32Config`, unless the aforementioned configurations do not support a test suite's ISA extensions (for example, in the case of `rv32ud`).
+
+Before running the compliance test, make sure that the correct emulator is built, following the link:https://github.com/freechipsproject/rocket-chip#emulator[instructions in the Rocket Chip repository].
+
+**Note**: Rocket Chip's `DefaultRV32Config` is currently failing the following test — link:https://github.com/riscv/riscv-compliance/issues/31[rv32i/I-MISALIGN_JMP-01.S].
+
+=== SiFive RISC-V ISA Formal Specification
+Additional environment variables:
+
+* `FORMALSPEC_DIR`: Specifies link:https://github.com/sifive/RiscvSpecFormal[formal specification] directory. Required.
+
+Build the link:https://github.com/sifive/RiscvSpecFormal[formal model] before running compliance tests. The model currently supports `RV32i` with `a`, `c`, and `f` extensions.
+
+**Note**: Some tests in the `rv32i` suite will fail because privileged CSRs are not yet implemented in the formal specification.
 
 === SiFive Freedom Unleashed 540 board (tbd)
 
@@ -420,8 +433,8 @@ codasip_signature_end:
 For example, to support the Codasip ISA simulator as the device under test
 (DUT), it was necessary to change `RISCV_SIM` from `spike` to
 `codix_berkelium-ia-isimulator –r` and parameters for running the simulator
-from `+signature=$(work_dir)/$<_signature.output` to `–info 5` plus handle
-redirection to a file by `1>$(work_dir)/$<_signature.output`.
+from `+signature=$(work_dir)/$<.signature.output` to `–info 5` plus handle
+redirection to a file by `1>$(work_dir)/$<.signature.output`.
 
 == Configuring the target device
 
@@ -437,7 +450,7 @@ For example for the riscvOVPsim to be configured to be a RV32I
 RUN_TARGET= \
         riscvOVPsim.exe --variant RV32I --program $(work_dir_isa)/$< \
             --signaturedump \
-            --override riscvOVPsim/cpu/sigdump/SignatureFile=$(work_dir_isa)/$(*)_signature.output \
+            --override riscvOVPsim/cpu/sigdump/SignatureFile=$(work_dir_isa)/$(*).signature.output \
             --override riscvOVPsim/cpu/sigdump/ResultReg=3 \
             --override riscvOVPsim/cpu/simulateexceptions=T \
             --logfile $(work_dir_isa)/$@
@@ -456,7 +469,7 @@ The top level directory contains a `README.md` file giving an overview of the pr
 
 `doc`:: All the documentation for the project, written using _AsciiDoc_.
 
-`riscv-target`:: Contains a further subdirectory for each target, within which are placed the `compliance_io.h` header for that target and a `device` directory for all the devices of that target.
+`riscv-target`:: Contains a further subdirectory for each target, within which are placed the `compliance_io.h` header for that target and a `device` directory for all the devices of that target. If the `$TARGETDIR` environment variable is set to another directory, the scripts will search this directory for targets instead.
 
 `riscv-test-env`:: This contains headers common to all environments, and then a directory for each TVM variant, with `link.ld` linker script and `riscv_test.h` header.
 
