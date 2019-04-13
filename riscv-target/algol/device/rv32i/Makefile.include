@@ -1,7 +1,8 @@
 ROOT?=${shell cd ../../../../; pwd}
 TARGET_FOLDER ?= $(ROOT)/tests/verilator/core
 TIMEOUT = 50000000
-RUN_TARGET= make -C $(TARGET_FOLDER) run ARGS="--file $(work_dir_isa)/$< --timeout $(TIMEOUT) --signature $(work_dir_isa)/$(*)_signature.output"
+RUN_TARGET= make -C $(TARGET_FOLDER) run ARGS="--file $(work_dir_isa)/$< --timeout $(TIMEOUT) \
+            --signature $(work_dir_isa)/$(*).signature.output"
 
 
 RISCV_PREFIX   ?= riscv-none-embed-
