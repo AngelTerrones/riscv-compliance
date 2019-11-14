@@ -66,6 +66,8 @@ VMI_IFETCH_FN(riscvIFetchExcept);
 VMI_ARITH_RESULT_FN(riscvArithResult);
 
 // parameter support functions
+VMI_PROC_PARAM_SPECS_FN(riscvGetPreParamSpec);
+VMI_SET_PARAM_VALUES_FN(riscvGetPreParamValues);
 VMI_PROC_PARAM_SPECS_FN(riscvGetParamSpec);
 VMI_PROC_PARAM_TABLE_SIZE_FN(riscvParamValueSize);
 
@@ -76,6 +78,8 @@ VMI_NET_PORT_SPECS_FN(riscvNetPortSpecs);
 // Imperas intercepted function support
 VMI_INT_RETURN_FN(riscvIntReturn);
 VMI_INT_RESULT_FN(riscvIntResult);
+VMI_INT_PAR_FN(riscvIntParCB);
+
 
 // processor information support
 VMI_PROC_INFO_FN(riscvProcInfo);

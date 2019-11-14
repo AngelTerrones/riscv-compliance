@@ -37,16 +37,18 @@
 //
 // Processor debug flags
 //
-#define RISCV_DISASSEMBLE_MASK  0x00000001
-#define RISCV_DEBUG_MMU_MASK    0x00000002
-#define RISCV_DEBUG_EXCEPT_MASK 0x00000004
+#define RISCV_DISASSEMBLE_MASK      0x00000001
+#define RISCV_DEBUG_MMU_MASK        0x00000002
+#define RISCV_DEBUG_EXCEPT_MASK     0x00000004
+#define RISCV_DEBUG_VECTIDX_MASK    0x00000008
 
 //
 // Processor flag selection macros
 //
-#define RISCV_DISASSEMBLE(_P)  ((_P)->flags & RISCV_DISASSEMBLE_MASK)
-#define RISCV_DEBUG_MMU(_P)    ((_P)->flags & RISCV_DEBUG_MMU_MASK)
-#define RISCV_DEBUG_EXCEPT(_P) ((_P)->flags & RISCV_DEBUG_EXCEPT_MASK)
+#define RISCV_DISASSEMBLE(_P)   ((_P)->flags & RISCV_DISASSEMBLE_MASK)
+#define RISCV_DEBUG_MMU(_P)     ((_P)->flags & RISCV_DEBUG_MMU_MASK)
+#define RISCV_DEBUG_EXCEPT(_P)  ((_P)->flags & RISCV_DEBUG_EXCEPT_MASK)
+#define RISCV_DEBUG_VECTIDX(_P) ((_P)->flags & RISCV_DEBUG_VECTIDX_MASK)
 
 //
 // Debug flags that should be disabled during save/restore
@@ -59,7 +61,9 @@
 //
 // Number of temporaries
 //
-#define NUM_TEMPS 4
+#define NUM_TEMPS_WIDE  3
+#define NUM_TEMPS_BASIC 4
+#define NUM_TEMPS       (NUM_TEMPS_WIDE+NUM_TEMPS_BASIC)
 
 //
 // Container for net values
@@ -119,6 +123,37 @@ typedef struct riscvNetPortS {
 } riscvNetPort;
 
 //
+// Maximum supported value of VLEN and number of vector registers (vector
+// extension)
+//
+#define VLEN_MAX        2048
+#define VBYTES_MAX      (VLEN_MAX/8)
+#define VDWORDS_MAX     (VLEN_MAX/64)
+#define VREG_NUM        32
+#define ELEN_MIN        32
+#define ELEN_MAX        64
+#define SLEN_MIN        32
+#define ELEN_DEFAULT    64
+#define SLEN_DEFAULT    64
+#define VLEN_DEFAULT    512
+#define SEW_MIN         8
+#define LMUL_MAX        8
+#define NUM_BASE_REGS   4
+
+//
+// This defines sufficient 64-bit aligned space for VREG_NUM vector registers
+// of up to VLEN_MAX bits. The assignment of the storage depends on the
+// configured VLEN
+//
+typedef Uns64 riscvVRegBank[VDWORDS_MAX*VREG_NUM];
+
+//
+// This defines the type of elements of the stride tables used to handle
+// striping
+//
+typedef Uns16 riscvStrideOffset;
+
+//
 // Processor model structure
 //
 typedef struct riscvS {
@@ -136,17 +171,20 @@ typedef struct riscvS {
     riscvArchitecture  currentArch;     // current enabled features
     riscvDMode         mode;            // current processor mode
     riscvDisableReason disable;         // reason why processor is disabled
-    Bool               verbose;         // whether verbose output enabled
-    Bool               artifactAccess;  // whether current access is an artifact
-    Bool               externalActive;  // whether external CSR access active
-    Bool               inSaveRestore;   // is save/restore active?
+    Bool               verbose       :1;// whether verbose output enabled
+    Bool               artifactAccess:1;// whether current access is an artifact
+    Bool               externalActive:1;// whether external CSR access active
+    Bool               inSaveRestore :1;// is save/restore active?
+    Bool               useTMode      :1;// has transaction mode been enabled?
+    Bool               rmCheckValid  :1;// whether RM valid check required
+    Uns16              pmKey;           // polymorphic key
+    Uns8               fpFlagsMT;       // flags set by JIT instructions
+    Uns8               fpFlagsCSR;      // flags set by CSR write
     Uns32              flags;           // model control flags
     Uns32              flagsRestore;    // saved flags during restore
     riscvConfig        configInfo;      // model configuration
     memEndian          dendian;         // data endianness
     memEndian          iendian;         // instruction endianness
-    riscvRMDesc        fpActiveRM;      // active floating-point rounding mode
-    vmiFPFlags         fpFlags;         // floating point flags
     Uns64              jumpBase;        // address of jump instruction
     Uns32              writtenXMask;    // mask of written X registers
 
@@ -154,6 +192,7 @@ typedef struct riscvS {
     riscvParamValuesP  paramValues;     // specified parameters (construction only)
 
     // Interrupt and exception control
+    vmiExceptionInfoCP exceptions;      // all exceptions (including extensions)
     Uns32              swip;            // software interrupt pending bits
     Uns64              exceptionMask;   // mask of all implemented exceptions
     Uns64              interruptMask;   // mask of all implemented interrupts
@@ -191,7 +230,7 @@ typedef struct riscvS {
     riscvBusPortP      csrPort;         // externally-implemented CSR port
 
     // Memory management support
-    memDomainP         vmDomains[RISCV_MODE_LAST][2];   // mapped domains
+    memDomainP         vmDomains  [RISCV_MODE_LAST][2]; // mapped domains
     memDomainP         pmpDomains [RISCV_MODE_LAST][2]; // pmp domains
     memDomainP         physDomains[RISCV_MODE_LAST][2]; // physical domains
     riscvPMPCFG        pmpcfg;              // pmpcfg registers
@@ -208,7 +247,19 @@ typedef struct riscvS {
     riscvBlockStateP   blockState;      // active block state
 
     // Enhanced model support callbacks
-    riscvModelCB       cb;
+    riscvModelCB       cb;                          // implemented by base model
+    riscvExtCBP        extCBs;                      // implemented in extension
+
+    // Vector extension
+    Uns8               vFieldMask;                  // vector field mask
+    Uns8               vActiveMask;                 // vector active element mask
+    Bool               vFirstFault;                 // vector first fault active?
+    Uns64              vTmp;                        // vector operation temporary
+    riscvVRegBank      v;                           // vector registers (configurable size)
+    UnsPS              vBase[NUM_BASE_REGS];        // indexed base registers
+    riscvStrideOffset  offsetsLMULx2[VBYTES_MAX*2]; // LMULx2 stride offsets
+    riscvStrideOffset  offsetsLMULx4[VBYTES_MAX*4]; // LMULx4 stride offsets
+    riscvStrideOffset  offsetsLMULx8[VBYTES_MAX*8]; // LMULx8 stride offsets
 
 } riscv;
 

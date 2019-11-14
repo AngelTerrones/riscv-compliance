@@ -20,9 +20,11 @@
 // VMI header files
 #include "vmi/vmiCxt.h"
 #include "vmi/vmiMessage.h"
+#include "vmi/vmiMt.h"
 #include "vmi/vmiRt.h"
 
 // model header files
+#include "riscvBlockState.h"
 #include "riscvDecode.h"
 #include "riscvFunctions.h"
 #include "riscvMessage.h"
@@ -45,8 +47,10 @@ inline static riscvP getChild(riscvP riscv) {
 //
 void riscvSetCurrentArch(riscvP riscv) {
 
-    // derive new architecture value based on misa value
+    // derive new architecture value based on misa value, preserving rounding
+    // mode invalid setting
     riscvArchitecture arch = (
+        (riscv->currentArch & ISA_RM_INVALID) |
         RD_CSR_FIELD(riscv, misa, Extensions) |
         (RD_CSR_FIELD(riscv, misa, MXL)<<XLEN_SHIFT)
     );
@@ -107,6 +111,39 @@ Uns32 riscvGetFlenArch(riscvP riscv) {
     }
 
     return result;
+}
+
+//
+// Register extension callback block with the base model
+//
+void riscvRegisterExtCB(riscvP riscv, riscvExtCBP extCB) {
+
+    riscvExtCBPP tail = &riscv->extCBs;
+    riscvExtCBP  this;
+
+    while((this=*tail)) {
+        tail = &this->next;
+    }
+
+    *tail = extCB;
+    extCB->next = 0;
+}
+
+//
+// Return extension configuration with the given id
+//
+riscvExtConfigCP riscvGetExtConfig(riscvP riscv, Uns32 id) {
+
+    riscvExtConfigCPP extCfgs = riscv->configInfo.extensionConfigs;
+    riscvExtConfigCP  extCfg  = 0;
+
+    if(extCfgs) {
+        while((extCfg=*extCfgs) && (extCfg->id!=id)) {
+            extCfgs++;
+        }
+    }
+
+    return extCfg;
 }
 
 //
@@ -386,6 +423,63 @@ const char *riscvGetFRegName(Uns32 index) {
 }
 
 //
+// Return the indexed V register name
+//
+const char *riscvGetVRegName(Uns32 index) {
+
+    static const char *map[32] = {
+        [0] = "v0",
+        [1] = "v1",
+        [2] = "v2",
+        [3] = "v3",
+        [4] = "v4",
+        [5] = "v5",
+        [6] = "v6",
+        [7] = "v7",
+        [8] = "v8",
+        [9] = "v9",
+        [10] = "v10",
+        [11] = "v11",
+        [12] = "v12",
+        [13] = "v13",
+        [14] = "v14",
+        [15] = "v15",
+        [16] = "v16",
+        [17] = "v17",
+        [18] = "v18",
+        [19] = "v19",
+        [20] = "v20",
+        [21] = "v21",
+        [22] = "v22",
+        [23] = "v23",
+        [24] = "v24",
+        [25] = "v25",
+        [26] = "v26",
+        [27] = "v27",
+        [28] = "v28",
+        [29] = "v29",
+        [30] = "v30",
+        [31] = "v31",
+    };
+
+    // sanity check index is in range
+    VMI_ASSERT(index<32, "Illegal index %u", index);
+
+    return map[index];
+}
+
+//
+// Utility function returning a vmiReg object to access the indexed vector
+// register
+//
+vmiReg riscvGetVReg(riscvP riscv, Uns32 index) {
+
+    void *value = &riscv->v[index*riscv->configInfo.VLEN/64];
+
+    return vmimtGetExtReg((vmiProcessorP)riscv, value);
+}
+
+//
 // Return index for the first feature identified by the given feature id
 //
 static Uns32 getFeatureIndex(riscvArchitecture feature) {
@@ -432,11 +526,43 @@ const char *riscvGetFeatureName(riscvArchitecture feature) {
         [RISCV_FEATURE_INDEX('N')]         = "extension N (user-level interrupts)",
         [RISCV_FEATURE_INDEX('S')]         = "extension S (Supervisor mode)",
         [RISCV_FEATURE_INDEX('U')]         = "extension U (User mode)",
+        [RISCV_FEATURE_INDEX('V')]         = "extension V (vector instructions)",
         [RISCV_FEATURE_INDEX('X')]         = "extension X (non-standard extensions present)"
     };
 
     // get feature description
     return featureDescs[getFeatureIndex(feature)];
+}
+
+//
+// Parse the extensions string
+//
+riscvArchitecture riscvParseExtensions(const char *extensions) {
+
+    riscvArchitecture result = 0;
+
+    if(extensions) {
+
+        const char *tail = extensions;
+        Bool        ok   = True;
+        char        extension;
+
+        while(ok && (extension=*tail++)) {
+
+            ok = (extension>='A') && (extension<='Z');
+
+            if(!ok) {
+                vmiMessage("E", CPU_PREFIX"_ILLEXT",
+                    "Illegal extension string \"%s\" - letters A-Z required",
+                    extensions
+                );
+            } else {
+                result |= (1<<(extension-'A'));
+            }
+        }
+    }
+
+    return result;
 }
 
 
@@ -499,7 +625,50 @@ void riscvUpdateExclusiveAccessCallback(riscvP riscv, Bool install) {
 // about to start or about to stop simulation)
 //
 VMI_IASSWITCH_FN(riscvContextSwitchCB) {
-    riscvUpdateExclusiveAccessCallback((riscvP)processor, state==RS_SUSPEND);
+
+    riscvP      riscv = (riscvP)processor;
+    riscvExtCBP extCB;
+
+    riscvUpdateExclusiveAccessCallback(riscv, state==RS_SUSPEND);
+
+    // call derived model context switch function if required
+    for(extCB=riscv->extCBs; extCB; extCB=extCB->next) {
+        if(extCB->switchCB) {
+            extCB->switchCB(riscv, state, extCB->clientData);
+        }
+    }
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+// TRANSACTION MODE
+////////////////////////////////////////////////////////////////////////////////
+
+//
+// Enable or disable transaction mode
+//
+RISCV_SET_TMODE_FN(riscvSetTMode) {
+
+    // flush dictionaries the first time transaction mode is enabled
+    if(enable && !riscv->useTMode) {
+
+        riscv->useTMode = True;
+
+        vmirtFlushAllDicts((vmiProcessorP)riscv);
+    }
+
+    // enable mode using polymorphic key
+    if(enable) {
+        riscv->pmKey |= PMK_TRANSACTION;
+    } else {
+        riscv->pmKey &= ~PMK_TRANSACTION;
+    }
+}
+
+//
+// Return true if in transaction mode
+//
+RISCV_GET_TMODE_FN(riscvGetTMode) {
+    return (riscv->pmKey & PMK_TRANSACTION) != 0;
+}
 

@@ -37,6 +37,16 @@ void riscvTakeException(
 );
 
 //
+// Take processor exception because of memory access error which could be
+// suppressed for a fault-only-first instruction
+//
+void riscvTakeMemoryException(
+    riscvP         riscv,
+    riscvException exception,
+    Uns64          tval
+);
+
+//
 // Reset the processor
 //
 void riscvReset(riscvP riscv);
@@ -90,6 +100,11 @@ Uns64 riscvGetLocalIntMask(riscvP riscv);
 // Initialize mask of implemented exceptions
 //
 void riscvSetExceptionMask(riscvP riscv);
+
+//
+// Free exception state
+//
+void riscvExceptFree(riscvP riscv);
 
 //
 // Update interrupt state because of some pending state change (either from

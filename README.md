@@ -40,7 +40,7 @@ The only setup required is to define where the toolchain is found, and where the
 For the toolchain, the binaries must be in the search path and the compiler prefix is defined on the make line. The default value for this is
 
     RISCV_PREFIX ?= riscv64-unknown-elf-
-    
+
 The path to the RUN_TARGET is defined within the riscv-target Makefile.include.
 
 To run the rv32i test suite on riscvOVPsim
@@ -52,3 +52,42 @@ To run the rv32i test suite on riscvOVPsim
 As we create the RISCV.org compliance test suite, the Imperas developed _riscvOVPsim_ compliance simulator is included as part of this GitHub repository. For more information please contact info@ovpworld.org or info@imperas.com.
 
 For more information on riscvOVPsim look here: [riscv-ovpsim/README.md](riscv-ovpsim/README.md) and here: [riscv-ovpsim/doc/riscvOVPsim_User_Guide.pdf](riscv-ovpsim/doc/riscvOVPsim_User_Guide.pdf).
+
+### Using the simulators from the Sail RISC-V formal model
+
+The [Sail RISC-V formal model](https://github.com/rems-project/sail-riscv) generates two
+simulators, in C and OCaml.  They can be used as test targets for this compliance suite.
+
+For this purpose, the Sail model needs to be checked out and built on
+the machine running the compliance suite.  Follow the build
+instructions described the README for building the RV32 and RV64
+models.  Once built, please add `$SAIL_RISCV/c_emulator` and
+`$SAIL_RISCV/ocaml_emulator` to your path, where $SAIL_RISCV is the
+top-level directory containing the model.
+
+To test the compliance of the C simulator for the current RV32 and RV64 tests, use
+
+    make RISCV_TARGET=sail-riscv-c all_variant
+
+while the corresponding command for the OCaml simulator is
+
+    make RISCV_TARGET=sail-riscv-ocaml all_variant
+
+### Using the GRIFT simulator
+
+The [GRIFT](https://github.com/GaloisInc/grift) formal model and simulation tool
+can be used as a test target for this compliance suite.
+
+GRIFT needs to be cloned and built on the machine running the compliance
+suite. Follow the build instructions described in the README for building the
+GRIFT simulator. Once build, add the generated `grift-sim` executable to your
+path.
+
+To test the compliance of the GRIFT simulator for the current RV32 and RV64
+tests, use
+
+    make RISCV_TARGET=grift all_variant
+
+Note that the I-MISALIGN_LDST test fails for GRIFT because GRIFT currently
+supports misaligned loads and stores in hardware, while the test is specifically
+written for systems that trap on misaligned loads and stores.

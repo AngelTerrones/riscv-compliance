@@ -90,15 +90,43 @@ static void fillSvModes(char *result, Uns32 Sv_modes) {
 }
 
 //
+// Add documentation using the optional documentation callback
+//
+inline static void addOptDoc(riscvP riscv, vmiDocNodeP node, riscvDocFn docCB) {
+    if(docCB) {
+        docCB(riscv, node);
+    }
+}
+
+//
+// Add documentation using an optional null-terminated string list
+//
+static void addOptDocList(vmiDocNodeP node, const char **specificDocs) {
+
+    if(specificDocs) {
+
+        const char *doc;
+
+        while((doc=*specificDocs++)) {
+            vmidocAddText(node, doc);
+        }
+    }
+}
+
+//
 // Create processor documentation
 //
-void riscvDoc(riscvP riscv) {
+void riscvDoc(riscvP rootProcessor) {
 
-    vmiDocNodeP   Root     = vmidocAddSection(0, "Root");
-    riscvP        child    = getChild(riscv);
-    riscvConfigCP cfg      = &riscv->configInfo;
-    Uns32         numHarts = cfg->numHarts;
-    Bool          isSMP    = numHarts && child && !cfg->members;
+    vmiDocNodeP      Root     = vmidocAddSection(0, "Root");
+    riscvP           riscv    = rootProcessor;
+    riscvP           child    = getChild(rootProcessor);
+    riscvConfigCP    cfg      = &riscv->configInfo;
+    Uns32            numHarts = cfg->numHarts;
+    Bool             isSMP    = numHarts && child && !cfg->members;
+    Uns32            extIndex;
+    riscvExtConfigCP extCfg;
+
     char          string[1024];
 
     // move to first child if an SMP object
@@ -137,42 +165,122 @@ void riscvDoc(riscvP riscv) {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // FEATURES
+    // EXTENSIONS
     ////////////////////////////////////////////////////////////////////////////
 
     {
-        vmiDocNodeP       Features = vmidocAddSection(Root, "Features");
-        riscvArchitecture arch     = cfg->arch;
+        vmiDocNodeP       Extensions = vmidocAddSection(Root, "Extensions");
+        riscvArchitecture arch       = cfg->arch;
 
         vmidocAddText(
-            Features,
-            "The model supports the following architectural features, defined "
-            "in the misa CSR:"
+            Extensions,
+            "The model has the following architectural extensions enabled, "
+            "and the following bits in the misa CSR Extensions field will "
+            "be set upon reset:"
         );
 
         while(arch) {
 
             riscvArchitecture feature     = arch & -arch;
             const char       *featureDesc = riscvGetFeatureName(feature);
+            Uns32             featureBit  = RISCV_FEATURE_INDEX(riscvGetFeatureChar(feature));
 
-            if(featureDesc) {
-                vmidocAddText(Features, featureDesc);
-            } else {
-                snprintf(SNPRINTF_TGT(string), "unknown feature %c", riscvGetFeatureChar(feature));
-                vmidocAddText(Features, string);
+            if(featureBit <= ('Z' - 'A')) {
+                snprintf(
+                    SNPRINTF_TGT(string),
+                    "misa bit %u: %s",
+                    featureBit,
+                    featureDesc ? featureDesc : "unknown feature"
+                );
+                vmidocAddText(Extensions, string);
             }
 
             arch = arch & ~feature;
         }
 
         vmidocAddText(
-            Features,
-            "If required, supported architectural features may be overridden "
-            "using parameter \"misa_Extensions\". Parameter "
-            "\"misa_Extensions_mask\" can be used to specify which features "
-            "can be dynamically enabled or disabled by writes to the misa "
+            Extensions,
+            "To specify features that can be dynamically enabled or disabled "
+            "by writes to the misa register in addition to those listed above, "
+            "use parameter \"add_Extensions_mask\". This is a string parameter "
+            "containing the feature letters to add; for example, value \"DV\" "
+            "indicates that double-precision floating point and the Vector "
+            "Extension can be enabled or disabled by writes to the misa "
             "register."
         );
+
+        vmidocAddText(
+            Extensions,
+            "Legacy parameter \"misa_Extensions_mask\" can also be used. This "
+            "Uns32-valued parameter specifies all writable bits in the misa "
+            "Extensions field, replacing any value defined in the base variant."
+        );
+
+        vmidocAddText(
+            Extensions,
+            "Note that any features that are indicated as present in the misa "
+            "mask but absent in the misa will be ignored. See the next section."
+        );
+
+        ////////////////////////////////////////////////////////////////////////////
+        // AVAILABLE EXTENSIONS
+        ////////////////////////////////////////////////////////////////////////////
+
+        {
+            vmiDocNodeP       AvailExt = vmidocAddSection(Extensions, "Available (But Not Enabled) Extensions");
+            riscvArchitecture arch     = cfg->arch;
+            Uns32             featureBit;
+
+            vmidocAddText(
+                AvailExt,
+                "The following extensions are supported by the model, but not "
+                "enabled by default in this variant:"
+            );
+
+            for(featureBit = 0; featureBit <= ('Z' - 'A'); featureBit++) {
+
+                riscvArchitecture feature = 1 << featureBit;
+
+                // report the extensions that are supported but not enabled
+                if((feature & arch) == 0) {
+                    const char *featureDesc = riscvGetFeatureName(feature);
+                    if(featureDesc) {
+                        snprintf(
+                            SNPRINTF_TGT(string),
+                            "misa bit %d: %s (NOT ENABLED)",
+                            featureBit,
+                            featureDesc
+                        );
+                        vmidocAddText(AvailExt, string);
+                    }
+                }
+            }
+
+            vmidocAddText(
+                AvailExt,
+                "To add features from this list to the base variant, use "
+                "parameter \"add_Extensions\". This is a string parameter "
+                "containing the feature letters to add; for example, value "
+                "\"DV\" indicates that double-precision floating point and the "
+                "Vector Extension should be enabled, if they are absent."
+            );
+
+            vmidocAddText(
+                Extensions,
+                "Legacy parameter \"misa_Extensions\" can also be used. This "
+                "Uns32-valued parameter specifies the reset value for the misa "
+                "CSR Extensions field, replacing any value defined in the base "
+                "variant."
+            );
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // FEATURES
+    ////////////////////////////////////////////////////////////////////////////
+
+    {
+        vmiDocNodeP Features = vmidocAddSection(Root, "General Features");
 
         // document multicore behavior
         if(isSMP) {
@@ -406,6 +514,25 @@ void riscvDoc(riscvP riscv) {
             );
         }
 
+        // document unaligned access behavior for AMO instructions
+        if(!(cfg->arch&ISA_A)) {
+            // no action
+        } else if(cfg->unalignedAMO) {
+            vmidocAddText(
+                Features,
+                "Unaligned memory accesses are supported for AMO instructions "
+                "by this variant. Set parameter \"unalignedAMO\" to \"F\" to "
+                "disable such accesses."
+            );
+        } else {
+            vmidocAddText(
+                Features,
+                "Unaligned memory accesses are not supported for AMO "
+                "instructions by this variant. Set parameter \"unalignedAMO\" "
+                "to \"T\" to enable such accesses."
+            );
+        }
+
         // document PMP regions
         if(cfg->PMP_registers) {
 
@@ -448,67 +575,214 @@ void riscvDoc(riscvP riscv) {
             vmidocAddText(Features, string);
         }
 
-        // floating point configuration
-        if(cfg->arch&ISA_DF) {
+    }
 
-            // document mstatus_FS
+    ////////////////////////////////////////////////////////////////////////////
+    // FLOATING POINT
+    ////////////////////////////////////////////////////////////////////////////
+
+    // floating point configuration
+    if(cfg->arch&ISA_DF) {
+
+        vmiDocNodeP Features = vmidocAddSection(Root, "Floating Point Features");
+
+        // document d_requires_f
+        if((cfg->archMask&ISA_DF) != ISA_DF) {
+            // no action
+        } else if(cfg->d_requires_f) {
             vmidocAddText(
                 Features,
-                "By default, the processor starts with floating-point "
-                "instructions disabled (mstatus.FS=0). Use parameter "
-                "\"mstatus_FS\" to force mstatus.FS to a non-zero value "
-                "for floating-point to be enabled from the start."
+                "The D extension is enabled in this variant only if the "
+                "F extension is also enabled. Set parameter \"d_requires_f\""
+                "to \"F\" to allow D and F to be independently enabled."
             );
-
-            // document d_requires_f
-            if((cfg->archMask&ISA_DF) != ISA_DF) {
-                // no action
-            } else if(cfg->d_requires_f) {
-                vmidocAddText(
-                    Features,
-                    "The D extension is enabled in this variant only if the "
-                    "F extension is also enabled. Set parameter \"d_requires_f\""
-                    "to \"F\" to allow D and F to be independently enabled."
-                );
-            } else {
-                vmidocAddText(
-                    Features,
-                    "The D extension is enabled in this variant independently "
-                    "of the F extension. Set parameter \"d_requires_f\""
-                    "to \"T\" to specify that the D extension requires the "
-                    "F extension to be enabled."
-                );
-            }
-
-            // document fs_always_dirty
-            if(cfg->fs_always_dirty) {
-
-                vmidocAddText(
-                    Features,
-                    "This variant implements a simplified floating point "
-                    "status view in which mstatus.FS holds values 0 (Off) "
-                    "and 3 (Dirty) only; any write of values 1 (Initial) or "
-                    "2 (Clean) from privileged code behave as if value 3 was "
-                    "written. Set parameter \"fs_always_dirty\" to \"F\" to "
-                    "specify that mstatus.FS should instead behave according "
-                    "to the Privileged Architecture specification."
-                );
-
-            } else {
-
-                vmidocAddText(
-                    Features,
-                    "This variant implements floating point status in "
-                    "mstatus.FS as defined in the Privileged Architecture "
-                    "specification. To specify that a simpler mode supporting "
-                    "only values 0 (Off) and 3 (Dirty) should be used, Set "
-                    "parameter \"fs_always_dirty\" to \"T\". When this simpler "
-                    "mode is used, any write of values 1 (Initial) or 2 "
-                    "(Clean) from privileged code behave as if value 3 was "
-                    "written."
-                );
-            }
+        } else {
+            vmidocAddText(
+                Features,
+                "The D extension is enabled in this variant independently "
+                "of the F extension. Set parameter \"d_requires_f\""
+                "to \"T\" to specify that the D extension requires the "
+                "F extension to be enabled."
+            );
         }
+
+        // document 16-bit floating point support
+        if(cfg->fp16_version) {
+            snprintf(
+                SNPRINTF_TGT(string),
+                "16-bit floating point is implemented (%s format).",
+                riscvGetFP16VersionDesc(riscv)
+            );
+            vmidocAddText(Features, string);
+        }
+
+        // document mstatus_FS
+        vmidocAddText(
+            Features,
+            "By default, the processor starts with floating-point "
+            "instructions disabled (mstatus.FS=0). Use parameter "
+            "\"mstatus_FS\" to force mstatus.FS to a non-zero value "
+            "for floating-point to be enabled from the start."
+        );
+
+        // document mstatus_fs_mode options
+        vmidocAddText(
+            Features,
+            "The specification is imprecise regarding the conditions "
+            "under which mstatus.FS is set to Dirty state (3). Parameter "
+            "\"mstatus_fs_mode\" can be used to specify the required "
+            "behavior in this model, as described below."
+        );
+        vmidocAddText(
+            Features,
+            "If \"mstatus_fs_mode\" is set to \"always_dirty\" then the "
+            "model implements a simplified floating point status view in "
+            "which mstatus.FS holds values 0 (Off) and 3 (Dirty) only; "
+            "any write of values 1 (Initial) or 2 (Clean) from privileged "
+            "code behave as if value 3 was written."
+        );
+        vmidocAddText(
+            Features,
+            "If \"mstatus_fs_mode\" is set to \"write_1\" then mstatus.FS "
+            "will be set to 3 (Dirty) by any explicit write to the fflags, "
+            "frm or fcsr control registers, or by any executed instruction "
+            "that writes an FPR, or by any executed floating point "
+            "compare or conversion to integer/unsigned that signals "
+            "a floating point exception. Floating point compare or "
+            "conversion to integer/unsigned instructions that do not "
+            "signal an exception will not set mstatus.FS."
+        );
+        vmidocAddText(
+            Features,
+            "If \"mstatus_fs_mode\" is set to \"write_any\" then mstatus.FS "
+            "will be set to 3 (Dirty) by any explicit write to the fflags, "
+            "frm or fcsr control registers, or by any executed instruction "
+            "that writes an FPR, or by any executed floating point "
+            "compare or conversion even if those instructions do not "
+            "signal a floating point exception."
+        );
+
+        // document mstatus_fs_mode default
+        snprintf(
+            SNPRINTF_TGT(string),
+            "In this variant, \"mstatus_fs_mode\" is set to \"%s\".",
+            riscvGetFSModeName(riscv)
+        );
+        vmidocAddText(Features, string);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // VECTOR EXTENSION
+    ////////////////////////////////////////////////////////////////////////////
+
+    if(cfg->archMask&ISA_V) {
+
+        vmiDocNodeP Vector = vmidocAddSection(Root, "Vector Extension");
+
+        vmidocAddText(
+            Vector,
+            "This variant implements the RISC-V base vector extension with "
+            "version specified in the References section of this document. "
+            "Note that parameter \"vector_version\" can be used to select "
+            "the required version, including the unstable \"master\" version "
+            "corresponding to the active specification."
+        );
+
+        vmiDocNodeP Parameters = vmidocAddSection(
+            Vector, "Vector Extension Parameters"
+        );
+
+        // document ELEN
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter ELEN is used to specify the maximum size of a single "
+            "vector element in bits (32 or 64). By default, ELEN is set to %u "
+            "in this variant.",
+            riscv->configInfo.ELEN
+        );
+        vmidocAddText(Parameters, string);
+
+        // document VLEN
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter VLEN is used to specify the number of bits in a vector "
+            "register (a power of two in the range 32 to 2048). By default, "
+            "VLEN is set to %u in this variant.",
+            riscv->configInfo.VLEN
+        );
+        vmidocAddText(Parameters, string);
+
+        // document SLEN
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter SLEN is used to specify the striping distance (a power "
+            "of two in the range 32 to 2048). By default, SLEN is set to %u "
+            "in this variant.",
+            riscv->configInfo.SLEN
+        );
+        vmidocAddText(Parameters, string);
+
+        // document Zvlsseg
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter Zvlsseg is used to specify whether the Zvlsseg "
+            "extension is implemented. By default, Zvlsseg is set to %u in "
+            "this variant.",
+            riscv->configInfo.Zvlsseg
+        );
+        vmidocAddText(Parameters, string);
+
+        // document Zvamo
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter Zvamo is used to specify whether the Zvamo "
+            "extension is implemented. By default, Zvamo is set to %u in "
+            "this variant.",
+            riscv->configInfo.Zvamo
+        );
+        vmidocAddText(Parameters, string);
+
+        // document Zvediv
+        snprintf(
+            SNPRINTF_TGT(string),
+            "Parameter Zvediv will be used to specify whether the Zvediv "
+            "extension is implemented. This is not currently supported."
+        );
+        vmidocAddText(Parameters, string);
+
+        vmiDocNodeP Features = vmidocAddSection(
+            Vector, "Vector Extension Features"
+        );
+
+        vmidocAddText(
+            Features,
+            "The model implements the base vector extension with a maximum "
+            "ELEN of 64. Striping, masking and polymorphism are all fully "
+            "supported. Zvlsseg and Zvamo extensions are fully supported. "
+            "The Zvediv extension specification is subject to change and "
+            "therefore not yet supported."
+        );
+
+        vmidocAddText(
+            Features,
+            "Single precision and double precision floating point types are "
+            "supported if those types are also supported in the base "
+            "architecture (i.e. the corresponding D and F features must be "
+            "present and enabled). Presently, the interaction of vector "
+            "floating point with the Privileged Architecture is not well "
+            "defined; this model assumes that vector floating point operations "
+            "may only be executed if the base floating point unit is also "
+            "enabled (i.e. mstatus.FS must be non-zero). Attempting to "
+            "execute vector floating point instructions when mstatus.FS is 0 "
+            "will cause an Illegal Instruction exception."
+        );
+
+        vmidocAddText(
+            Features,
+            "The model assumes that all vector memory operations must be "
+            "aligned to the memory element size. Unaligned accesses will "
+            "cause a Load/Store Address Alignment exception."
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -680,9 +954,16 @@ void riscvDoc(riscvP riscv) {
             );
         }
 
-        // add specific restrictions if required
-        if(cfg->restrictionsCB) {
-            cfg->restrictionsCB(riscv, Limitations);
+        // add custom restrictions if required
+        addOptDoc(riscv, Limitations, cfg->restrictionsCB);
+
+        // add extension-specific restrictions if required
+        for(
+            extIndex = 0;
+            (extCfg = riscvGetIndexedExtConfig(cfg, extIndex));
+            extIndex++
+        ) {
+            addOptDoc(riscv, Limitations, extCfg->restrictionsCB);
         }
     }
 
@@ -699,6 +980,40 @@ void riscvDoc(riscvP riscv) {
             "using tests generated specifically for this model and also "
             "reference tests from https://github.com/riscv/riscv-tests."
         );
+        vmidocAddText(Verification,
+            "Also reference tests have been used from various sources including:"
+        );
+        vmidocAddText(Verification,
+            "https://github.com/riscv/riscv-tests"
+        );
+        vmidocAddText(Verification,
+            "https://github.com/ucb-bar/riscv-torture"
+        );
+        vmidocAddText(Verification,
+            "The Imperas OVPsim RISC-V models are used in the RISC-V Foundations"
+            "Compliance Framework as a functional Golden Reference:"
+        );
+        vmidocAddText(Verification,
+            "https://github.com/riscv/riscv-compliance"
+        );
+        vmidocAddText(Verification,
+            "where the simulated model is used to provide the reference signatures"
+            "for compliance testing."
+            "The Imperas OVPsim RISC-V models are used as reference in both open"
+            "source and commercial instruction stream test generators for hardware"
+            "design verification, for example:"
+        );
+        vmidocAddText(Verification,
+            "http://valtrix.in/sting/ from Valtrix"
+        );
+        vmidocAddText(Verification,
+            "https://github.com/google/riscv-dv from Google"
+        );
+        vmidocAddText(Verification,
+            "The Imperas OVPsim RISC-V models are also used by commercial and open"
+            "source RISC-V Core RTL developers as a reference to ensure correct"
+            "functionality of their IP."
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -706,8 +1021,7 @@ void riscvDoc(riscvP riscv) {
     ////////////////////////////////////////////////////////////////////////////
 
     {
-        vmiDocNodeP  References   = vmidocAddSection(Root, "References");
-        const char **specificDocs = cfg->specificDocs;
+        vmiDocNodeP References = vmidocAddSection(Root, "References");
 
         vmidocAddText(
             References,
@@ -716,31 +1030,42 @@ void riscvDoc(riscvP riscv) {
 
         snprintf(
             SNPRINTF_TGT(string),
-            "---- RISC-V Instruction Set Manual, Volume I: "
+            "RISC-V Instruction Set Manual, Volume I: "
             "User-Level ISA (%s)",
             riscvGetUserVersionDesc(riscv)
         );
         vmidocAddText(References, string);
 
-
         snprintf(
             SNPRINTF_TGT(string),
-            "---- RISC-V Instruction Set Manual, Volume II: Privileged "
+            "RISC-V Instruction Set Manual, Volume II: Privileged "
             "Architecture (%s)",
             riscvGetPrivVersionDesc(riscv)
         );
         vmidocAddText(References, string);
 
-        if(specificDocs) {
+        if(cfg->archMask&ISA_V) {
+            snprintf(
+                SNPRINTF_TGT(string),
+                "RISC-V \"V\" Vector Extension (%s)",
+                riscvGetVectorVersionDesc(riscv)
+            );
+            vmidocAddText(References, string);
+        }
 
-            const char *doc;
+        // add custom references if required
+        addOptDocList(References, cfg->specificDocs);
 
-            while((doc=*specificDocs++)) {
-                vmidocAddText(References, doc);
-            }
+        // add extension-specific references if required
+        for(
+            extIndex = 0;
+            (extCfg = riscvGetIndexedExtConfig(cfg, extIndex));
+            extIndex++
+        ) {
+            addOptDocList(References, extCfg->specificDocs);
         }
     }
 
-    vmidocProcessor((vmiProcessorP)riscv, Root);
+    vmidocProcessor((vmiProcessorP)rootProcessor, Root);
 }
 
