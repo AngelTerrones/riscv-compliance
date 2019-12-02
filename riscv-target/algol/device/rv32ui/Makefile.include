@@ -1,0 +1,20 @@
+ROOT?=${shell cd ../../../../; pwd}
+TARGET_FOLDER ?= $(ROOT)/tests/verilator/core
+TIMEOUT = 50000000
+RUN_TARGET= make -C $(TARGET_FOLDER) run ARGS="--file $(work_dir_isa)/$< --timeout $(TIMEOUT) \
+            --signature $(work_dir_isa)/$(*).signature.output"
+
+
+RISCV_PREFIX   ?= riscv-none-embed-
+RISCV_GCC      ?= $(RISCV_PREFIX)gcc
+RISCV_OBJDUMP  ?= $(RISCV_PREFIX)objdump
+RISCV_GCC_OPTS ?= -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles
+
+COMPILE_TARGET=\
+  $$(RISCV_GCC) $(2) $$(RISCV_GCC_OPTS) \
+    -I$(ROOTDIR)/riscv-test-env/ \
+    -I$(ROOTDIR)/riscv-test-env/p/ \
+    -I$(ROOTDIR)/riscv-target/$(RISCV_TARGET)/ \
+    -T$(ROOTDIR)/riscv-test-env/p/link.ld $$< \
+    -o $(work_dir_isa)/$$@; \
+  $$(RISCV_OBJDUMP) -D $(work_dir_isa)/$$@ > $(work_dir_isa)/$$@.objdump;
