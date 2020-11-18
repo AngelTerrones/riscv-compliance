@@ -16,7 +16,7 @@ do
     # Ensure both files exist
     #
     if [ -f ${ref} ] && [ -f ${sig} ]; then 
-        echo -n "Check $(printf %16s ${stub})"
+        echo -n "Check $(printf %16s ${stub}) "
     else
         echo    "Check $(printf %16s ${stub}) ... IGNORE"
         continue
