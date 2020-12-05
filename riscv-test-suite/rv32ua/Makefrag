@@ -11,7 +11,7 @@ rv32ua_sc_tests =    \
     amoor_w
 
 # ToDo - investigate this test
-rv32ua_sc_tests := $(subst lrsc,,$(rv32ua_sc_tests))
+rv32ua_sc_tests := $(subst lrsc,lrsc,$(rv32ua_sc_tests))
 
 rv32ua_tests = $(addsuffix .elf, $(rv32ua_sc_tests))
 
